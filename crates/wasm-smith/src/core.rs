@@ -376,6 +376,15 @@ impl Module {
     }
 
     fn arbitrary_types(&mut self, u: &mut Unstructured) -> Result<()> {
+        if self.config.require_start_export() {
+            let ty = Type::Func(Rc::new(FuncType {
+                params: vec![],
+                results: vec![],
+            }));
+            self.record_type(&ty);
+            self.types.push(ty);
+        }
+
         // NB: It isn't guaranteed that `self.types.is_empty()` because when
         // available imports are configured, we may add eagerly specigfic types
         // for the available imports before generating arbitrary types here.
@@ -387,6 +396,7 @@ impl Module {
             self.types.push(ty);
             Ok(true)
         })?;
+
         Ok(())
     }
 
@@ -810,6 +820,12 @@ impl Module {
             return Ok(());
         }
 
+        if self.config.require_start_export() {
+            let ty = 0;
+            self.funcs.push((ty, self.func_type(ty).clone()));
+            self.num_defined_funcs += 1;
+        }
+
         arbitrary_loop(u, self.config.min_funcs(), self.config.max_funcs(), |u| {
             if !self.can_add_local_or_import_func() {
                 return Ok(false);
@@ -1009,7 +1025,9 @@ impl Module {
             }
         }
 
-        if !choices.is_empty() && u.arbitrary().unwrap_or(false) {
+        let maybe_drop = u.arbitrary().unwrap_or(false) || self.config.require_start_export();
+
+        if !choices.is_empty() && maybe_drop {
             let f = *u.choose(&choices)?;
             self.start = Some(f);
         }

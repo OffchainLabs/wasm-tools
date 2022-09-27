@@ -373,6 +373,11 @@ pub trait Config: 'static + std::fmt::Debug {
         true
     }
 
+    /// Determines whether a `start` export must be included. Defaults to `false`.
+    fn require_start_export(&self) -> bool {
+        false
+    }
+
     /// Returns the maximal size of the `alias` section.
     fn max_aliases(&self) -> usize {
         1_000
