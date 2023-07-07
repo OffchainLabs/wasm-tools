@@ -95,6 +95,11 @@ pub trait Config: 'static + std::fmt::Debug {
         None
     }
 
+    /// Whether to require all available imports to be imported
+    fn force_imports(&self) -> bool {
+        false
+    }
+
     /// The minimum number of functions to generate. Defaults to 0.  This
     /// includes imported functions.
     fn min_funcs(&self) -> usize {
@@ -189,6 +194,11 @@ pub trait Config: 'static + std::fmt::Debug {
     /// proposal.
     fn max_memories(&self) -> usize {
         1
+    }
+
+    /// The exported name of the last memory
+    fn memory_name(&self) -> Option<String> {
+        None
     }
 
     /// The minimum number of tables to use. Defaults to 0. This includes
@@ -371,6 +381,16 @@ pub trait Config: 'static + std::fmt::Debug {
     /// Determines whether a `start` export may be included. Defaults to `true`.
     fn allow_start_export(&self) -> bool {
         true
+    }
+
+    /// Determines whether a `start` export must be included. Defaults to `false`.
+    fn require_start_export(&self) -> bool {
+        false
+    }
+
+    /// Whether to force each function to start with a loop that repeates the given number of times.
+    fn force_loop(&self) -> Option<u32> {
+        None
     }
 
     /// Returns the maximal size of the `alias` section.

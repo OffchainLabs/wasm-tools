@@ -376,6 +376,15 @@ impl Module {
     }
 
     fn arbitrary_types(&mut self, u: &mut Unstructured) -> Result<()> {
+        if self.config.require_start_export() {
+            let ty = Type::Func(Rc::new(FuncType {
+                params: vec![],
+                results: vec![],
+            }));
+            self.record_type(&ty);
+            self.types.push(ty);
+        }
+
         // NB: It isn't guaranteed that `self.types.is_empty()` because when
         // available imports are configured, we may add eagerly specigfic types
         // for the available imports before generating arbitrary types here.
@@ -387,6 +396,7 @@ impl Module {
             self.types.push(ty);
             Ok(true)
         })?;
+
         Ok(())
     }
 
@@ -564,7 +574,7 @@ impl Module {
                         // We can immediately filter whether this is an import we want to
                         // use.
                         let use_import = u.arbitrary().unwrap_or(false);
-                        if !use_import {
+                        if !use_import && !self.config.force_imports() {
                             continue;
                         }
                         available_imports.push(im);
@@ -810,7 +820,16 @@ impl Module {
             return Ok(());
         }
 
-        arbitrary_loop(u, self.config.min_funcs(), self.config.max_funcs(), |u| {
+        if self.config.require_start_export() {
+            let ty = self.num_imports as u32;
+            self.funcs.push((ty, self.func_type(ty).clone()));
+            self.num_defined_funcs += 1;
+        }
+
+        let min_more_funcs = self.config.min_funcs().saturating_sub(self.funcs.len());
+        let max_more_funcs = self.config.max_funcs().saturating_sub(self.funcs.len());
+
+        arbitrary_loop(u, min_more_funcs, max_more_funcs, |u| {
             if !self.can_add_local_or_import_func() {
                 return Ok(false);
             }
@@ -928,17 +947,23 @@ impl Module {
                 .collect(),
         );
         choices.push(
-            (0..self.memories.len())
-                .map(|i| (ExportKind::Memory, i as u32))
-                .collect(),
-        );
-        choices.push(
             (0..self.globals.len())
                 .map(|i| (ExportKind::Global, i as u32))
                 .collect(),
         );
+        choices.push(
+            (0..self.memories.len())
+                .map(|i| (ExportKind::Memory, i as u32))
+                .collect(),
+        );
 
         let mut export_names = HashSet::new();
+
+        if let Some(name) = self.config.memory_name() {
+            if let Some((kind, idx)) = choices.last_mut().map(|x| x.pop()).flatten() {
+                self.add_arbitrary_export(name.clone(), kind, idx)?;
+            }
+        }
 
         // If the configuration demands exporting everything, we do so here and
         // early-return.
@@ -1009,7 +1034,9 @@ impl Module {
             }
         }
 
-        if !choices.is_empty() && u.arbitrary().unwrap_or(false) {
+        let maybe_drop = u.arbitrary().unwrap_or(false) || self.config.require_start_export();
+
+        if !choices.is_empty() && maybe_drop {
             let f = *u.choose(&choices)?;
             self.start = Some(f);
         }
@@ -1172,7 +1199,33 @@ impl Module {
         let instructions = if allow_invalid && u.arbitrary().unwrap_or(false) {
             Instructions::Arbitrary(arbitrary_vec_u8(u)?)
         } else {
-            Instructions::Generated(builder.arbitrary(u, self)?)
+            if let Some(count) = self.config.force_loop() {
+                use wasm_encoder::Instruction::*;
+                
+                let mut body = vec![
+                    I32Const(count as i32),
+                    LocalSet(0),
+                    Loop(BlockType::Empty),
+                ];
+                body.extend(builder.arbitrary(u, self)?);
+
+                body.extend(vec![
+                    LocalGet(0),
+                    I32Eqz,
+
+                    // decrement
+                    LocalGet(0),
+                    I32Const(1),
+                    I32Sub,
+                    LocalSet(0),
+                    
+                    BrIf(0),
+                    End
+                ]);
+                Instructions::Generated(body)
+            } else {
+                Instructions::Generated(builder.arbitrary(u, self)?)
+            }
         };
 
         Ok(Code {
@@ -1183,6 +1236,12 @@ impl Module {
 
     fn arbitrary_locals(&self, u: &mut Unstructured) -> Result<Vec<ValType>> {
         let mut ret = Vec::new();
+
+        // loop counter
+        if self.config.force_loop().is_some() {
+            ret.push(ValType::I32);
+        }
+        
         arbitrary_loop(u, 0, 100, |u| {
             ret.push(self.arbitrary_valtype(u)?);
             Ok(true)
@@ -1640,6 +1699,7 @@ flags! {
     #[cfg_attr(feature = "_internal_cli", derive(serde::Deserialize))]
     pub enum InstructionKind: u16 {
         Numeric,
+        Float,
         Vector,
         Reference,
         Parametric,
@@ -1655,6 +1715,7 @@ impl FromStr for InstructionKind {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "numeric" => Ok(InstructionKind::Numeric),
+            "float" => Ok(InstructionKind::Float),
             "vector" => Ok(InstructionKind::Vector),
             "reference" => Ok(InstructionKind::Reference),
             "parametric" => Ok(InstructionKind::Parametric),
