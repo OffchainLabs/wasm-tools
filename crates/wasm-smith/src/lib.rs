@@ -83,7 +83,16 @@ pub(crate) fn arbitrary_loop<'a>(
             return Err(arbitrary::Error::IncorrectFormat);
         }
     }
-    for _ in 0..(max - min) {
+    if max != min {
+        let count: usize = u.arbitrary()?;
+        for _ in 0..count % (max - min) {
+            if !f(u)? {
+                break;
+            }
+        }
+    }
+
+    /*for _ in 0..(max - min) {
         let keep_going = u.arbitrary().unwrap_or(false);
         if !keep_going {
             break;
@@ -92,7 +101,7 @@ pub(crate) fn arbitrary_loop<'a>(
         if !f(u)? {
             break;
         }
-    }
+    }*/
 
     Ok(())
 }

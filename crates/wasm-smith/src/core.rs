@@ -1201,26 +1201,20 @@ impl Module {
         } else {
             if let Some(count) = self.config.force_loop() {
                 use wasm_encoder::Instruction::*;
-                
-                let mut body = vec![
-                    I32Const(count as i32),
-                    LocalSet(0),
-                    Loop(BlockType::Empty),
-                ];
+
+                let mut body = vec![I32Const(count as i32), LocalSet(0), Loop(BlockType::Empty)];
                 body.extend(builder.arbitrary(u, self)?);
 
                 body.extend(vec![
                     LocalGet(0),
                     I32Eqz,
-
                     // decrement
                     LocalGet(0),
                     I32Const(1),
                     I32Sub,
                     LocalSet(0),
-                    
                     BrIf(0),
-                    End
+                    End,
                 ]);
                 Instructions::Generated(body)
             } else {
@@ -1241,7 +1235,7 @@ impl Module {
         if self.config.force_loop().is_some() {
             ret.push(ValType::I32);
         }
-        
+
         arbitrary_loop(u, 0, 100, |u| {
             ret.push(self.arbitrary_valtype(u)?);
             Ok(true)
