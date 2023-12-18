@@ -79,7 +79,6 @@ pub(crate) fn arbitrary_loop<'a>(
     assert!(max >= min);
     for _ in 0..min {
         if !f(u)? {
-            panic!("here");
             return Err(arbitrary::Error::IncorrectFormat);
         }
     }

@@ -388,8 +388,9 @@ pub trait Config: 'static + std::fmt::Debug {
         false
     }
 
-    /// Whether to force each function to start with a loop that repeates the given number of times.
-    fn force_loop(&self) -> Option<u32> {
+    /// Whether to force each function to start with a loop that repeates the given number of times,
+    /// and how many times the body of the loop should be repeated.
+    fn force_loop(&self) -> Option<(u32, usize)> {
         None
     }
 

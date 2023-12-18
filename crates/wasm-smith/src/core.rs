@@ -347,6 +347,15 @@ impl Module {
     fn build(&mut self, u: &mut Unstructured, allow_invalid: bool) -> Result<()> {
         self.valtypes = configured_valtypes(&*self.config);
 
+        if self.config.require_start_export() {
+            let ty = Type::Func(Rc::new(FuncType {
+                params: vec![],
+                results: vec![],
+            }));
+            self.record_type(&ty);
+            self.types.push(ty);
+        }
+
         // We attempt to figure out our available imports *before* creating the types section here,
         // because the types for the imports are already well-known (specified by the user) and we
         // must have those populated for all function/etc. imports, no matter what.
@@ -357,6 +366,15 @@ impl Module {
         } else {
             self.arbitrary_types(u)?;
             self.arbitrary_imports(u)?;
+        }
+
+        if self.types.len() % 2 == 1 {
+            let ty = Type::Func(Rc::new(FuncType {
+                params: vec![],
+                results: vec![],
+            }));
+            self.record_type(&ty);
+            self.types.push(ty);
         }
 
         self.should_encode_types = !self.types.is_empty() || u.arbitrary()?;
@@ -376,15 +394,6 @@ impl Module {
     }
 
     fn arbitrary_types(&mut self, u: &mut Unstructured) -> Result<()> {
-        if self.config.require_start_export() {
-            let ty = Type::Func(Rc::new(FuncType {
-                params: vec![],
-                results: vec![],
-            }));
-            self.record_type(&ty);
-            self.types.push(ty);
-        }
-
         // NB: It isn't guaranteed that `self.types.is_empty()` because when
         // available imports are configured, we may add eagerly specigfic types
         // for the available imports before generating arbitrary types here.
@@ -821,8 +830,7 @@ impl Module {
         }
 
         if self.config.require_start_export() {
-            let ty = self.num_imports as u32;
-            self.funcs.push((ty, self.func_type(ty).clone()));
+            self.funcs.push((0, self.func_type(0).clone()));
             self.num_defined_funcs += 1;
         }
 
@@ -1026,6 +1034,15 @@ impl Module {
             return Ok(());
         }
 
+        if self.config.require_start_export() {
+            let first = self.num_imports - 1;
+            let start = self.funcs[first..]
+                .iter()
+                .position(|(_, x)| x.params.is_empty() && x.results.is_empty())
+                .ok_or(arbitrary::Error::IncorrectFormat)?;
+            self.start = Some((start + first) as u32);
+        }
+
         let mut choices = Vec::with_capacity(self.funcs.len() as usize);
 
         for (func_idx, ty) in self.funcs() {
@@ -1034,7 +1051,7 @@ impl Module {
             }
         }
 
-        let maybe_drop = u.arbitrary().unwrap_or(false) || self.config.require_start_export();
+        let maybe_drop = u.arbitrary().unwrap_or(false);
 
         if !choices.is_empty() && maybe_drop {
             let f = *u.choose(&choices)?;
@@ -1199,23 +1216,52 @@ impl Module {
         let instructions = if allow_invalid && u.arbitrary().unwrap_or(false) {
             Instructions::Arbitrary(arbitrary_vec_u8(u)?)
         } else {
-            if let Some(count) = self.config.force_loop() {
+            if let Some((count, bodies)) = self.config.force_loop() {
                 use wasm_encoder::Instruction::*;
+                let counter = ty.params.len() as u32; // locals start after params
 
-                let mut body = vec![I32Const(count as i32), LocalSet(0), Loop(BlockType::Empty)];
-                body.extend(builder.arbitrary(u, self)?);
+                let timer = self.imports.iter().position(|x| x.field == "toggle_timer");
 
-                body.extend(vec![
-                    LocalGet(0),
-                    I32Eqz,
-                    // decrement
-                    LocalGet(0),
+                let mut body = vec![];
+                if let Some(timer) = timer {
+                    body.extend(vec![
+                        // start timer
+                        Call(timer as u32),
+                    ]);
+                }
+                body.extend([
+                    // set the counter
+                    I32Const(count as i32),
+                    LocalSet(counter),
+                    Loop(BlockType::Empty),
+                ]);
+
+                let inner = builder.arbitrary(u, self)?;
+                for _ in 0..bodies {
+                    body.extend(inner.clone());
+                }
+
+                body.extend([
+                    // decrement counter
+                    LocalGet(counter),
                     I32Const(1),
                     I32Sub,
-                    LocalSet(0),
+                    LocalTee(counter),
+
+                    // check if done
+                    I32Const(0),
+                    I32Ne,
                     BrIf(0),
                     End,
                 ]);
+
+                if let Some(timer) = timer {
+                    body.extend([
+                        // stop timer
+                        Call(timer as u32),
+                    ]);
+                }
+                
                 Instructions::Generated(body)
             } else {
                 Instructions::Generated(builder.arbitrary(u, self)?)
