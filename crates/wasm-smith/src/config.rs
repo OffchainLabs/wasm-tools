@@ -172,6 +172,11 @@ pub trait Config: 'static + std::fmt::Debug {
         100
     }
 
+    /// Whether data offsets should be in-bounds.
+    fn valid_data_inits(&self) -> bool {
+        false
+    }
+
     /// The maximum number of instructions to generate in a function
     /// body. Defaults to 100.
     ///

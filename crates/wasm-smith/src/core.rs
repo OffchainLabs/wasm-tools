@@ -154,6 +154,29 @@ impl Module {
         &*self.config
     }
 
+    /// Adds the Stylus entrypoint
+    pub fn add_entrypoint(&mut self) {
+        let ty = Rc::new(FuncType {
+            params: vec![ValType::I32],
+            results: vec![ValType::I32],
+        });
+        let ty_index = self.types.len() as u32;
+        let func_index = self.funcs.len() as u32;
+
+        self.types.push(Type::Func(ty.clone()));
+        self.funcs.push((ty_index, ty));
+        self.func_types.push(ty_index);
+
+        self.num_defined_funcs += 1;
+
+        self.code.push(Code {
+            locals: vec![],
+            instructions: Instructions::Generated(vec![Instruction::Unreachable]),
+        });
+        self.exports
+            .push(("user_entrypoint".into(), ExportKind::Func, func_index));
+    }
+
     /// Creates a new `Module` with the specified `config` for
     /// configuration and `Unstructured` for the DNA of this module.
     pub fn new(config: impl Config, u: &mut Unstructured<'_>) -> Result<Self> {
@@ -1247,7 +1270,6 @@ impl Module {
                     I32Const(1),
                     I32Sub,
                     LocalTee(counter),
-
                     // check if done
                     I32Const(0),
                     I32Ne,
@@ -1261,7 +1283,7 @@ impl Module {
                         Call(timer as u32),
                     ]);
                 }
-                
+
                 Instructions::Generated(body)
             } else {
                 Instructions::Generated(builder.arbitrary(u, self)?)
@@ -1376,7 +1398,19 @@ impl Module {
                     } else {
                         u.choose(&choices32)?
                     };
-                    let offset = f(u, mem.minimum, init.len())?;
+                    let mut offset = f(u, mem.minimum, init.len())?;
+
+                    if self.config.valid_data_inits() {
+                        let len = init.len() as u64;
+                        let mem = mem.minimum as u64 * (1 + 16);
+                        let bound = mem.saturating_sub(len);
+                        match &mut offset {
+                            Offset::Const32(x) if *x as u64 >= bound => *x = 0,
+                            Offset::Const64(x) if *x as u64 >= bound => *x = 0,
+                            _ => {}
+                        }
+                    }
+
                     DataSegmentKind::Active {
                         offset,
                         memory_index,
